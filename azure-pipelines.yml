@@ -1,0 +1,72 @@
+# azure-pipelines.yml
+trigger:
+  branches:
+    include:
+      - main   # cámbialo si usas otra rama
+
+pr:
+  branches:
+    include:
+      - main
+
+variables:
+  buildConfiguration: 'Release'
+  dotnetVersion: '8.0.x'  # usa 7.0.x si tu API es .NET 7
+  # Nombres de despliegue
+  azureSubscription: 'Nombre-De-Tu-Service-Connection'   # <-- AJUSTA
+  webAppName: 'matamonchis-api-prod'                     # <-- AJUSTA (App Service)
+  # Ruta del csproj de tu API
+  apiProject: 'MatamonchisAPI/MatamonchisAPI.csproj'     # <-- AJUSTA
+
+stages:
+- stage: Build
+  displayName: Build & Test
+  pool:
+    vmImage: 'windows-latest'      # en Linux también funciona ('ubuntu-latest')
+  jobs:
+  - job: Build
+    steps:
+    - task: UseDotNet@2
+      displayName: 'Use .NET SDK $(dotnetVersion)'
+      inputs:
+        packageType: 'sdk'
+        version: '$(dotnetVersion)'
+
+    - script: dotnet restore
+      displayName: 'Restore'
+
+    - script: dotnet build "$(apiProject)" -c $(buildConfiguration) --no-restore
+      displayName: 'Build'
+
+    # Si tienes tests, descomenta y ajusta el path del proyecto de pruebas
+    #- script: dotnet test tests/MatamonchisAPI.Tests/MatamonchisAPI.Tests.csproj -c $(buildConfiguration) --no-build --logger trx
+    #  displayName: 'Test'
+
+    - script: dotnet publish "$(apiProject)" -c $(buildConfiguration) -o $(Build.ArtifactStagingDirectory)/publish
+      displayName: 'Publish'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact: drop'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/publish'
+        ArtifactName: 'drop'
+        publishLocation: 'Container'
+
+- stage: Deploy
+  displayName: Deploy to Azure Web App
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - deployment: DeployWeb
+    environment: 'production' # crea/usa el environment que prefieras
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebApp@1
+            displayName: 'Deploy to $(webAppName)'
+            inputs:
+              azureSubscription: '$(azureSubscription)'
+              appType: 'webApp'           # para Windows; usa 'webAppLinux' si tu App Service es Linux
+              appName: '$(webAppName)'
+              package: '$(Pipeline.Workspace)/drop'
